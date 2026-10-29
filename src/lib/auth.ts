@@ -1,7 +1,8 @@
 import "server-only";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { prisma } from "./prisma";
-import { forbidden, unauthorized } from "./http";
+import { csrfRejection, mutationRequestFrom } from "./csrf";
+import { ApiError, forbidden, unauthorized } from "./http";
 import { createClient } from "./supabase/server";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./supabase/env";
 
@@ -60,6 +61,7 @@ async function userIdFromCookies(): Promise<string | null> {
 /**
  * Authenticates an API request from `Authorization: Bearer <token>` or the session cookie.
  * A request that sends an Authorization header is judged on that header alone. Throws 401.
+ * Cookie-authenticated mutations must also pass the CSRF check (403 otherwise).
  */
 export async function requireActor(request: Request): Promise<Actor> {
   const header = request.headers.get("authorization");
@@ -69,6 +71,12 @@ export async function requireActor(request: Request): Promise<Actor> {
     userId = match ? await userIdFromAccessToken(match[1]) : null;
   } else {
     userId = await userIdFromCookies();
+    // Browsers attach the session cookie automatically, so cookie-authenticated
+    // mutations must also prove they come from this app's own pages.
+    if (userId) {
+      const rejection = csrfRejection(mutationRequestFrom(request));
+      if (rejection) throw new ApiError(403, rejection);
+    }
   }
   if (!userId) throw unauthorized();
   return resolveActor(userId);

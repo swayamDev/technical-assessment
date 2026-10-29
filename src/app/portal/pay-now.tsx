@@ -38,6 +38,8 @@ export function PayNow({
     try {
       const response = await fetch(`/api/leases/${leaseId}/gateway-bills`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
       });
       if (!response.ok) {
         toast.error(await apiErrorMessage(response));

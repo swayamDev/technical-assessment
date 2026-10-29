@@ -5,6 +5,7 @@
 
 import { createHmac } from "node:crypto";
 import nextEnv from "@next/env";
+import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 
 nextEnv.loadEnvConfig(process.cwd());
@@ -50,6 +51,51 @@ async function api(method, path, token, body) {
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = text;
+  }
+  return { status: res.status, json };
+}
+
+/** A real browser session cookie, built by @supabase/ssr exactly as the app's pages do. */
+async function cookieSession(email) {
+  const jar = new Map();
+  const client = createServerClient(SUPABASE_URL, PUBLISHABLE, {
+    cookies: {
+      getAll: () => [...jar].map(([name, value]) => ({ name, value })),
+      setAll: (cookies) => {
+        for (const { name, value } of cookies) {
+          if (value) jar.set(name, value);
+          else jar.delete(name);
+        }
+      },
+    },
+  });
+  const { error } = await client.auth.signInWithPassword({
+    email,
+    password: PASSWORD,
+  });
+  if (error || jar.size === 0)
+    throw new Error(`cookie sign-in failed for ${email}`);
+  return [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+
+/** A request as a browser would send it: cookie auth, with the given Origin and Content-Type. */
+async function browserApi(
+  method,
+  path,
+  { cookie, origin, contentType, body, token },
+) {
+  const headers = {};
+  if (cookie) headers.cookie = cookie;
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (origin) headers.origin = origin;
+  if (contentType) headers["content-type"] = contentType;
+  const res = await fetch(`${APP}${path}`, { method, headers, body });
   const text = await res.text();
   let json;
   try {
@@ -687,16 +733,14 @@ async function main() {
   check(
     "manager cannot insert payment",
     (
-      await manager.db
-        .from("payments")
-        .insert({
-          org_id: nwOrg,
-          lease_id: aisyahLease,
-          amount_sen: 1,
-          method: "cash",
-          status: "approved",
-          received_at: new Date().toISOString(),
-        })
+      await manager.db.from("payments").insert({
+        org_id: nwOrg,
+        lease_id: aisyahLease,
+        amount_sen: 1,
+        method: "cash",
+        status: "approved",
+        received_at: new Date().toISOString(),
+      })
     ).error !== null,
   );
   check(
@@ -714,6 +758,161 @@ async function main() {
     "rpc helper not exposed",
     (await manager.db.rpc("member_org_id")).error !== null,
   );
+
+  console.log("CSRF (cookie-authenticated mutations)");
+  {
+    const SAME = new URL(APP).origin;
+    const EVIL = "https://evil.example";
+    const probeCookie = await cookieSession("probe@northwind.test");
+    const staffCookie = await cookieSession("staff@northwind.test");
+    const billsPath = `/api/leases/${probeLease}/gateway-bills`;
+    const countBills = async () =>
+      (
+        await manager.db
+          .from("gateway_bills")
+          .select("id", { count: "exact", head: true })
+          .eq("lease_id", probeLease)
+      ).count;
+    const countPayments = async () =>
+      (
+        await manager.db
+          .from("payments")
+          .select("id", { count: "exact", head: true })
+          .eq("lease_id", probeLease)
+      ).count;
+
+    const billsBefore = await countBills();
+    const valid = await browserApi("POST", billsPath, {
+      cookie: probeCookie,
+      origin: SAME,
+      contentType: "application/json",
+      body: "{}",
+    });
+    check(
+      "same-origin JSON with cookie -> 201",
+      valid.status === 201,
+      JSON.stringify(valid.json),
+    );
+    check(
+      "valid browser request created one bill",
+      (await countBills()) === billsBefore + 1,
+    );
+
+    const crossOrigin = await browserApi("POST", billsPath, {
+      cookie: probeCookie,
+      origin: EVIL,
+      contentType: "application/json",
+      body: "{}",
+    });
+    check(
+      "cross-origin with cookie -> 403 { error }",
+      crossOrigin.status === 403 && typeof crossOrigin.json.error === "string",
+      JSON.stringify(crossOrigin),
+    );
+    const otherPort = await browserApi("POST", billsPath, {
+      cookie: probeCookie,
+      origin: "http://localhost:4000",
+      contentType: "application/json",
+      body: "{}",
+    });
+    check("same-site other port with cookie -> 403", otherPort.status === 403);
+    const noOrigin = await browserApi("POST", billsPath, {
+      cookie: probeCookie,
+      contentType: "application/json",
+      body: "{}",
+    });
+    check("missing Origin with cookie -> 403", noOrigin.status === 403);
+    const textPlain = await browserApi("POST", billsPath, {
+      cookie: probeCookie,
+      origin: SAME,
+      contentType: "text/plain",
+      body: "{}",
+    });
+    check("text/plain with cookie -> 403", textPlain.status === 403);
+    const form = await browserApi("POST", billsPath, {
+      cookie: probeCookie,
+      origin: SAME,
+      contentType: "application/x-www-form-urlencoded",
+      body: "a=1",
+    });
+    check("form-encoded with cookie -> 403", form.status === 403);
+    check(
+      "refused requests created no bills",
+      (await countBills()) === billsBefore + 1,
+    );
+
+    const paymentsBefore = await countPayments();
+    const forgedPayment = await browserApi(
+      "POST",
+      `/api/leases/${probeLease}/payments`,
+      {
+        cookie: staffCookie,
+        origin: EVIL,
+        contentType: "text/plain",
+        body: JSON.stringify({
+          amountSen: 100,
+          method: "cash",
+          receivedAt: "2026-10-01T09:00:00+08:00",
+        }),
+      },
+    );
+    check(
+      "cross-origin payment with staff cookie -> 403",
+      forgedPayment.status === 403,
+    );
+    check(
+      "no payment recorded by the forged request",
+      (await countPayments()) === paymentsBefore,
+    );
+    const browserPayment = await browserApi(
+      "POST",
+      `/api/leases/${probeLease}/payments`,
+      {
+        cookie: staffCookie,
+        origin: SAME,
+        contentType: "application/json; charset=utf-8",
+        body: JSON.stringify({
+          amountSen: 100,
+          method: "cash",
+          receivedAt: "2026-10-01T09:00:00+08:00",
+        }),
+      },
+    );
+    check(
+      "same-origin payment with staff cookie -> 201",
+      browserPayment.status === 201 &&
+        browserPayment.json.status === "pending_verification",
+      JSON.stringify(browserPayment.json),
+    );
+
+    const safeGet = await browserApi("GET", `/api/leases/${probeLease}`, {
+      cookie: probeCookie,
+      origin: EVIL,
+    });
+    check("GET with cookie is not affected -> 200", safeGet.status === 200);
+    const anonymous = await browserApi("POST", billsPath, {
+      origin: EVIL,
+      contentType: "text/plain",
+      body: "{}",
+    });
+    check("no session -> still 401", anonymous.status === 401);
+    const badCookie = await browserApi("POST", billsPath, {
+      cookie: "sb-127-auth-token=garbage",
+      origin: EVIL,
+      contentType: "application/json",
+      body: "{}",
+    });
+    check("invalid cookie -> still 401", badCookie.status === 401);
+    const bearerCrossOrigin = await browserApi("POST", billsPath, {
+      token: probe.token,
+      origin: EVIL,
+    });
+    check(
+      "bearer token without Origin/JSON is not affected -> 201",
+      bearerCrossOrigin.status === 201,
+      JSON.stringify(bearerCrossOrigin.json),
+    );
+  }
 
   console.log("Gateway");
   check(
