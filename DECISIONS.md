@@ -32,9 +32,9 @@ This is correct because Malaysia is a fixed UTC+8 with no daylight saving, so ad
 ## 4. Queries not subject to RLS, and what authorizes them instead
 
 - **Prisma (as the database owner):**
-  - `requireActor` (`src/lib/auth.ts:64`) verifies the caller with `getUser()`.
-  - The role comes only from `memberships` and `tenants` (`auth.ts:21`).
-  - Records outside the caller's scope get 404 (`src/server/access.ts:9-41`), and roles not allowed get 403 (`auth.ts:84-91`).
+  - `requireActor` (`src/lib/auth.ts:66`) verifies the caller with `getUser()`.
+  - The role comes only from `memberships` and `tenants` (`auth.ts:22`).
+  - Records outside the caller's scope get 404 (`src/server/access.ts:9-41`), and roles not allowed get 403 (`auth.ts:92-101`).
   - IDs in request bodies are re-checked against the caller's organization (`src/server/leases.ts:67-71`).
   - The webhook is authorized by its HMAC signature instead.
 - **Secret key:** used only in `payments.ts:208`, to remove an unreferenced slip in the caller's own organization's folder, under an advisory lock. It is also used by the seed script.

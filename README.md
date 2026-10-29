@@ -59,7 +59,7 @@ Then open **Check payment status** (`/payments/return?bill_id=...`). That page o
 | Command | What it checks |
 | --- | --- |
 | `npm test` | Unit tests for `src/lib/billing.ts` and `src/lib/allocation.ts`, run three times: under `TZ=UTC`, `Asia/Kuala_Lumpur` and `America/New_York` |
-| `node scripts/e2e-check.mjs` | 99 end-to-end checks against a running app on a freshly seeded database. Covers 401/403/404 per role and organization; concurrent cap, approval and lease overlap; Data API and Storage access per role; forged, duplicated, concurrent and out-of-order webhooks. It adds data, so reset and re-seed afterwards. |
+| `node scripts/e2e-check.mjs` | 118 end-to-end checks against a running app on a freshly seeded database. Covers 401/403/404 per role and organization; CSRF on cookie-authenticated mutations; concurrent cap, approval and lease overlap; Data API and Storage access per role; forged, duplicated, concurrent and out-of-order webhooks. It adds data, so reset and re-seed afterwards. |
 | `npm run typecheck`, `npm run lint` | TypeScript strict mode and ESLint |
 
 ## Where things are
@@ -68,7 +68,7 @@ Then open **Check payment status** (`/payments/return?bill_id=...`). That page o
 | --- | --- |
 | `src/lib/billing.ts` | Pure billing rules: schedule, invoice status, ringgit parsing, Malaysia "today" |
 | `src/lib/allocation.ts` | Pure allocation order and planning |
-| `src/lib/auth.ts` | Authenticates from a Bearer token or the session cookie with `getUser()`; the role comes from `memberships` and `tenants` |
+| `src/lib/auth.ts` | Authenticates from a Bearer token or the session cookie with `getUser()`; the role comes from `memberships` and `tenants`. Cookie-authenticated mutations must also come from the app's own origin and send JSON (`src/lib/csrf.ts`), otherwise 403 |
 | `src/server/*` | Services: leases, payments, gateway, reports. Each lease's money changes run under a `FOR UPDATE` lock on the lease row |
 | `src/app/api/*` | The HTTP API from the brief (thin route handlers) |
 | `supabase/migrations/` | Tables, constraints, triggers, grants, RLS policies, the storage bucket and its policies |
