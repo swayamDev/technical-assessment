@@ -79,6 +79,11 @@ export default async function LeasesPage({
             Search
           </button>
         </form>
+        {actor.role === "manager" && (
+          <Link href="/leases/new" className={buttonVariants()}>
+            New lease
+          </Link>
+        )}
       </div>
       <Card>
         <CardContent>
