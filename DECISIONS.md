@@ -38,7 +38,7 @@ This is correct because Malaysia is a fixed UTC+8 with no daylight saving, so ad
   - IDs in request bodies are re-checked against the caller's organization (`src/server/leases.ts:67-71`).
   - The webhook is authorized by its HMAC signature instead.
 - **Secret key:** used only in `payments.ts:208`, to remove an unreferenced slip in the caller's own organization's folder, under an advisory lock. It is also used by the seed script.
-- **`SECURITY DEFINER` functions:** the RLS helpers (`supabase/migrations/20261029123640_access_control.sql:35-75`) return only the rows of `auth.uid()`, and the Data API cannot call them. `check_payment_slip` (`init_schema.sql:177`) only reads `storage.objects`.
+- **`SECURITY DEFINER` functions:** the RLS helpers (`supabase/migrations/20261029123640_access_control.sql:35-75`) return only the rows of `auth.uid()`, and the Data API cannot call them. `check_payment_slip` (`init_schema.sql:177`) only reads `storage.objects`. `notify_lease_change` (`20261029150110_realtime_tenant_portal.sql:12`) sends a data-free signal; RLS on `realtime.messages` decides who receives it.
 
 ## 5. A void reopens invoices while the lease has `unapplied_sen` from an online payment
 

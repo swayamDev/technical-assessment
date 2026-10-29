@@ -59,7 +59,7 @@ Then open **Check payment status** (`/payments/return?bill_id=...`). That page o
 | Command | What it checks |
 | --- | --- |
 | `npm test` | Unit tests for `src/lib/billing.ts` and `src/lib/allocation.ts`, run three times: under `TZ=UTC`, `Asia/Kuala_Lumpur` and `America/New_York` |
-| `node scripts/e2e-check.mjs` | 118 end-to-end checks against a running app on a freshly seeded database. Covers 401/403/404 per role and organization; CSRF on cookie-authenticated mutations; concurrent cap, approval and lease overlap; Data API and Storage access per role; forged, duplicated, concurrent and out-of-order webhooks. It adds data, so reset and re-seed afterwards. |
+| `node scripts/e2e-check.mjs` | 138 end-to-end checks against a running app on a freshly seeded database. Covers 401/403/404 per role and organization; CSRF on cookie-authenticated mutations; Realtime topic isolation; concurrent cap, approval and lease overlap; Data API and Storage access per role; forged, duplicated, concurrent and out-of-order webhooks. It adds data, so reset and re-seed afterwards. |
 | `npm run typecheck`, `npm run lint` | TypeScript strict mode and ESLint |
 
 ## Where things are
@@ -89,15 +89,17 @@ Everything in sections 3 to 9 of the brief:
 - the collections report;
 - the staff, manager and tenant UI, with every date and time shown in Malaysia time.
 
-Bonus items done:
+All four bonus items are done:
 
-- unit tests for billing and allocation;
-- server-side search and pagination for the leases list, kept in the URL.
+- **Unit tests** for billing and allocation.
+- **Server-side search and pagination** for the leases list, kept in the URL.
+- **Create-lease form with a live schedule preview** (`/leases/new`, managers only). The preview runs the same `generateSchedule` the server uses, so it shows exactly the invoices that will be stored, and it warns about overlapping leases. `POST /api/leases` remains the authority.
+- **Realtime updates in the tenant portal.** When the webhook settles a bill, the open portal shows "Payment received" and refreshes without a reload. It works like this:
+  - Triggers send a data-free "changed" signal to a private Realtime Broadcast topic, `lease:<lease_id>`.
+  - RLS on `realtime.messages` lets only that lease's tenant join and receive it, and nobody can send on it.
+  - The portal then re-reads its data through RLS.
 
-## Skipped
-
-- **Bonus: create-lease form with a live schedule preview.** Leases are created through `POST /api/leases` or the seed; there is no form.
-- **Bonus: realtime updates in the tenant portal.** The portal shows the new status after a reload.
+  Postgres Changes was rejected: it notifies even anonymous subscribers that a row changed, as an empty event marked 401, and it does not check RLS for deletes. The migration is `supabase/migrations/20261029150110_realtime_tenant_portal.sql`.
 
 ## Known issues and limits
 
@@ -110,6 +112,5 @@ Bonus items done:
 ## What I would do next
 
 - An audited "apply unapplied credit" action for managers.
-- The create-lease form with a live schedule preview, and realtime updates in the tenant portal.
 - Reuse a tenant's pending bill instead of creating a new one on every click.
 - Run the e2e checks in CI against an ephemeral Supabase stack.
