@@ -50,5 +50,8 @@ The trade-off: a tenant can show overdue invoices while holding credit. An expli
 
 ## 6. Two things the AI assistant got wrong, and how I noticed
 
-1. **Concurrency test assumptions.** The first run of `scripts/e2e-check.mjs` failed 4 checks. Before changing any code, I looked at the database rows. The app was right and the test was wrong: it assumed the RM 800 request would win the race (the RM 700 one did), and it expected the Northwind manager to see Beta's audit rows, which RLS correctly hides. I fixed the test, not the app. See `ai-logs/2026-10-29-claude-code-session.txt`, lines 2303 and 2584.
-2. **Prisma raw query.** The assistant called `pg_advisory_xact_lock`, which returns `void`, through `$queryRaw`. The seed crashed with "Failed to deserialize column of type 'void'". It now uses `$executeRaw`. See the same file, lines 2248–2249 and 2583.
+Line numbers refer to `ai-logs/2026-10-29-claude-code-session.txt`.
+
+**1. Realtime notifications exposed too much access.** My first approach used Postgres Changes for tenant payment updates. During testing, I discovered that anonymous users could receive updates they should not have access to. I changed the implementation to private, lease-scoped Broadcast channels. The database sends only a data-free notification, and the tenant portal fetches the actual information through the normal RLS-protected queries. I added tests to check that other tenants, staff and anonymous users cannot subscribe. (Log: lines 6174–6184.)
+
+**2. I made incorrect assumptions while testing concurrency.** My initial concurrency test did not accurately model the behaviour I wanted to verify. I corrected the test after investigating the problem and reran the checks. This reminded me that a passing test is only useful when the test itself represents a realistic scenario. (Log: lines 2303 and 2584.)
