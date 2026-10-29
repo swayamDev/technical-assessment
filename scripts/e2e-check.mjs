@@ -1060,6 +1060,177 @@ async function main() {
     .eq("id", bill2.json.billId);
   check("failed -> paid", failedThenPaid[0]?.status === "paid");
 
+  console.log("Realtime (tenant portal, private broadcast)");
+  {
+    // Joins a lease topic like the portal does. Attackers are assumed to know the lease id.
+    const listen = async (label, token, topic, isPrivate = true) => {
+      const client = createClient(SUPABASE_URL, PUBLISHABLE, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      if (token) await client.realtime.setAuth(token);
+      const events = [];
+      const channel = client
+        .channel(topic, { config: { private: isPrivate } })
+        .on("broadcast", { event: "*" }, (message) => events.push(message));
+      const status = await new Promise((resolve) => {
+        channel.subscribe((s) => {
+          if (
+            s === "SUBSCRIBED" ||
+            s === "CHANNEL_ERROR" ||
+            s === "TIMED_OUT" ||
+            s === "CLOSED"
+          )
+            resolve(s);
+        });
+        setTimeout(() => resolve("no reply"), 5000);
+      });
+      return { label, client, events, status };
+    };
+
+    const { data: benLeases } = await ben.db.from("leases").select("id");
+    const benLease = benLeases[0].id;
+    const topic = `lease:${benLease}`;
+    const listeners = await Promise.all([
+      listen("ben", ben.token, topic),
+      listen("probe", probe.token, topic),
+      listen("aisyah", aisyah.token, topic),
+      listen("chen", chen.token, topic),
+      listen("beta-manager", betaManager.token, topic),
+      listen("staff", staff.token, topic),
+      listen("anon", null, topic),
+      listen("anon-public", null, topic, false),
+      listen("probe-public", probe.token, topic, false),
+    ]);
+    const byLabel = Object.fromEntries(listeners.map((l) => [l.label, l]));
+    console.log(
+      `    (join results: ${listeners.map((l) => `${l.label}=${l.status}`).join(", ")})`,
+    );
+    check(
+      "owner joins the private lease topic",
+      byLabel.ben.status === "SUBSCRIBED",
+      byLabel.ben.status,
+    );
+    for (const label of [
+      "probe",
+      "aisyah",
+      "chen",
+      "beta-manager",
+      "staff",
+      "anon",
+    ]) {
+      check(
+        `${label} cannot join the private lease topic`,
+        byLabel[label].status !== "SUBSCRIBED",
+        byLabel[label].status,
+      );
+    }
+
+    const benBill = await api(
+      "POST",
+      `/api/leases/${benLease}/gateway-bills`,
+      ben.token,
+    );
+    check(
+      "ben creates a bill -> 201",
+      benBill.status === 201,
+      JSON.stringify(benBill.json),
+    );
+    const benPaid = await webhook(
+      signedWebhookBody({
+        id: benBill.json.billId,
+        paid: "true",
+        paid_amount: String(benBill.json.amountSen),
+        paid_at: "2026-10-29 15:00:00 +0800",
+        transaction_id: "TX-RT",
+        transaction_status: "completed",
+      }),
+    );
+    check("webhook settles ben's bill -> 200", benPaid.status === 200);
+
+    // Wait until the owner has the payment signal (10 s at most), then 2 s more so that a
+    // signal leaking to any other subscriber would also have arrived.
+    const hasPaymentSignal = () =>
+      byLabel.ben.events.some((e) => e.payload?.table === "payments");
+    for (let i = 0; i < 50 && !hasPaymentSignal(); i++)
+      await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 2000));
+
+    check(
+      "owner receives payment and bill change signals",
+      hasPaymentSignal() &&
+        byLabel.ben.events.some((e) => e.payload?.table === "gateway_bills"),
+      JSON.stringify(byLabel.ben.events.map((e) => e.payload)),
+    );
+    // Payload is { table, op } plus "id", the Realtime message id that realtime.send adds.
+    const { data: benPayments } = await ben.db
+      .from("payments")
+      .select("id")
+      .eq("gateway_bill_id", benBill.json.billId);
+    const rowIds = new Set([
+      benBill.json.billId,
+      ...(benPayments ?? []).map((p) => p.id),
+    ]);
+    check(
+      "signals carry no row data",
+      byLabel.ben.events.length > 0 &&
+        byLabel.ben.events.every(
+          (e) =>
+            e.event === "changed" &&
+            Object.keys(e.payload).every((k) =>
+              ["id", "op", "table"].includes(k),
+            ) &&
+            !rowIds.has(e.payload.id),
+        ),
+      JSON.stringify(byLabel.ben.events.map((e) => e.payload)),
+    );
+    for (const label of [
+      "probe",
+      "aisyah",
+      "chen",
+      "beta-manager",
+      "staff",
+      "anon",
+      "anon-public",
+      "probe-public",
+    ]) {
+      check(
+        `${label} receives nothing`,
+        byLabel[label].events.length === 0,
+        JSON.stringify(byLabel[label].events),
+      );
+    }
+    // Forged signals on the real topic, through Realtime's broadcast REST endpoint.
+    // No insert policy exists on realtime.messages, so neither may be delivered.
+    const forge = (token) =>
+      fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
+        method: "POST",
+        headers: {
+          apikey: PUBLISHABLE,
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              topic,
+              event: "changed",
+              payload: { forged: true },
+              private: true,
+            },
+          ],
+        }),
+      });
+    await forge(probe.token);
+    await forge(ben.token);
+    await new Promise((r) => setTimeout(r, 2000));
+    check(
+      "forged broadcasts on the lease topic are not delivered",
+      !byLabel.ben.events.some((e) => e.payload?.forged),
+      JSON.stringify(byLabel.ben.events.map((e) => e.payload)),
+    );
+    await Promise.all(listeners.map((l) => l.client.removeAllChannels()));
+  }
+
   console.log(
     failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`,
   );

@@ -197,6 +197,46 @@ export function TenantPortal({ tenantId }: { tenantId: string }) {
     void refresh();
   }, [refresh]);
 
+  // Realtime: each lease has a private topic lease:<id> that only its tenant may join
+  // (RLS on realtime.messages). Signals carry no data; we re-read everything under RLS.
+  const leaseKey = data?.leases.map((l) => l.id).join(",") ?? "";
+  useEffect(() => {
+    if (!leaseKey) return;
+    const supabase = createClient();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let paymentArrived = false;
+    let cancelled = false;
+    const channels: ReturnType<typeof supabase.channel>[] = [];
+
+    void (async () => {
+      await supabase.realtime.setAuth(); // use the signed-in session's token
+      if (cancelled) return;
+      for (const leaseId of leaseKey.split(",")) {
+        const channel = supabase
+          .channel(`lease:${leaseId}`, { config: { private: true } })
+          .on("broadcast", { event: "changed" }, ({ payload }) => {
+            if (payload?.table === "payments" && payload?.op === "INSERT")
+              paymentArrived = true;
+            // One settlement sends several signals: refresh once they have all arrived.
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+              if (paymentArrived) toast.success("Payment received");
+              paymentArrived = false;
+              void refresh();
+            }, 400);
+          })
+          .subscribe();
+        channels.push(channel);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      for (const channel of channels) void supabase.removeChannel(channel);
+    };
+  }, [leaseKey, refresh]);
+
   if (error && !data) {
     return (
       <Alert variant="destructive">
