@@ -39,7 +39,7 @@
     "eslint-config-next": "16.4.3",
     "prettier": "^3.9.10",
     "prettier-plugin-tailwindcss": "^0.8.1",
-    "prisma": "8.0.0-rc.28",
+    "prisma": "^7.10.1",
     "supabase": "^2.122.0",
     "tailwindcss": "^4",
     "typescript": "^5"
