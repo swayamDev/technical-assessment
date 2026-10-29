@@ -50,5 +50,5 @@ The trade-off: a tenant can show overdue invoices while holding credit. An expli
 
 ## 6. Two things the AI assistant got wrong, and how I noticed
 
-1. **Concurrency test assumptions.** The first run of `scripts/e2e-check.mjs` failed 4 checks. Before changing any code, I looked at the database rows. The app was right and the test was wrong: it assumed the RM 800 request would win the race (the RM 700 one did), and it expected the Northwind manager to see Beta's audit rows, which RLS correctly hides. I fixed the test, not the app. In the AI logs, search for `allocated once [{"amount_sen":70000}]`.
-2. **Prisma raw query.** The assistant called `pg_advisory_xact_lock`, which returns `void`, through `$queryRaw`. The seed crashed with "Failed to deserialize column of type 'void'". It now uses `$executeRaw`. In the logs, search for `Failed to deserialize`.
+1. **Concurrency test assumptions.** The first run of `scripts/e2e-check.mjs` failed 4 checks. Before changing any code, I looked at the database rows. The app was right and the test was wrong: it assumed the RM 800 request would win the race (the RM 700 one did), and it expected the Northwind manager to see Beta's audit rows, which RLS correctly hides. I fixed the test, not the app. See `ai-logs/2026-10-29-claude-code-session.txt`, lines 2303 and 2584.
+2. **Prisma raw query.** The assistant called `pg_advisory_xact_lock`, which returns `void`, through `$queryRaw`. The seed crashed with "Failed to deserialize column of type 'void'". It now uses `$executeRaw`. See the same file, lines 2248–2249 and 2583.

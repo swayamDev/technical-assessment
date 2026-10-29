@@ -75,7 +75,7 @@ Then open **Check payment status** (`/payments/return?bill_id=...`). That page o
 | `prisma/schema.prisma` | Introspected from the database; drift check: `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code` |
 | `prisma/seed.ts` | Seeds through `createLease`, `recordPayment` and `approvePayment` |
 
-Design decisions are in [DECISIONS.md](DECISIONS.md), and the Part B code review is in [REVIEW.md](REVIEW.md).
+Design decisions are in [DECISIONS.md](DECISIONS.md), the Part B code review is in [REVIEW.md](REVIEW.md), and the AI session transcript is in [ai-logs/](ai-logs/README.md).
 
 ## What works
 
@@ -108,6 +108,11 @@ All four bonus items are done:
 - **`audit_log` is append-only, with one exception.** It is enforced for every application role and the database owner, but a Postgres superuser could still disable the triggers.
 - **Each API request makes one round trip to the Auth server.** `getUser()` validates the token with the server every time.
 - **Two lockfiles.** npm uses `package-lock.json`, which was verified with `npm ci` and the full setup above; pnpm uses `pnpm-lock.yaml`. After changing dependencies, update both: run `pnpm add …`, then `npm install` to refresh `package-lock.json`.
+- **Low-severity findings from my security review, not fixed:**
+  - A staff member could make a deliberately failing request naming a colleague's freshly uploaded, not-yet-recorded slip, and the cleanup would delete it. This stays within one organization.
+  - Tenants can create any number of pending gateway bills.
+  - Unexpected server errors log the error message, which for Prisma errors can include query arguments (never payloads or keys).
+  - The webhook reads the whole request body before checking the signature.
 
 ## What I would do next
 
