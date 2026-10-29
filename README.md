@@ -105,7 +105,7 @@ Bonus items done:
 - **Every "Pay now" click creates a new bill.** If the tenant pays two bills, the second payment fills future invoices first, and anything left becomes `unapplied_sen`.
 - **`audit_log` is append-only, with one exception.** It is enforced for every application role and the database owner, but a Postgres superuser could still disable the triggers.
 - **Each API request makes one round trip to the Auth server.** `getUser()` validates the token with the server every time.
-- **Two lockfiles in effect.** The repository is developed with pnpm (`pnpm-lock.yaml`), but npm, which the grader uses, ignores that file and resolves the version ranges in `package.json`.
+- **Two lockfiles.** npm uses `package-lock.json`, which was verified with `npm ci` and the full setup above; pnpm uses `pnpm-lock.yaml`. After changing dependencies, update both: run `pnpm add …`, then `npm install` to refresh `package-lock.json`.
 
 ## What I would do next
 
